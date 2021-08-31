@@ -70,7 +70,7 @@ public isolated client class Client {
     remote isolated function postCustomersCustomer(string customer, CustomersCustomerBody payload) returns Customer|error {
         string  path = string `/v1/customers/${customer}`;
         http:Request request = new;
-        map<[string, boolean][]> encodingMap = {"deepObject" : [["address", true], ["bank_account", true], ["card", true], ["expand", true], ["invoice_settings", true], ["metadata", true], ["preferred_locales", true], ["shipping", true], ["tax", true], ["trial_end", true]]};
+        map<[string, boolean]> encodingMap = {"address" : ["deepObject", true], "bank_account" : ["deepObject", true], "card" : ["deepObject", true], "expand" : ["deepObject", true], "invoice_settings" : ["deepObject", true], "metadata" : ["deepObject", true], "preferred_locales" : ["deepObject", true], "shipping" : ["deepObject", true], "tax" : ["deepObject", true], "trial_end" : ["deepObject", true]};
         string requestBody = createFormURLEncodedRequestBody(encodingMap, payload); 
         request.setTextPayload(requestBody);
         check request.setContentType(mime:APPLICATION_FORM_URLENCODED);
@@ -80,12 +80,11 @@ public isolated client class Client {
 }
 
 
-isolated function createFormURLEncodedRequestBody(map<[string, boolean][]> encoding, any anyRecord) returns string{ 
+isolated function createFormURLEncodedRequestBody(map<[string, boolean]> encoding, any anyRecord) returns string{ 
     string payload = "";
-    [string, boolean][]|error deepObjectStyleProps = trap encoding.get("deepObject");                
-    [string, boolean][]|error formStyleProps = trap encoding.get("form");
     if (anyRecord is record {|any|error...; |}) {
         foreach [string, any|error] [key, value] in anyRecord.entries() {
+            [string, boolean]|error encodingData = trap encoding.get(key);
             if (value is string|boolean|int|float) {
                 payload = payload + key + "=" + getEncodedUri(value.toString()) + "&"; 
             } else if (value is string[]) {
@@ -93,22 +92,21 @@ isolated function createFormURLEncodedRequestBody(map<[string, boolean][]> encod
                     payload = payload + key + "[]" + "=" + getEncodedUri(str.toString()) + "&";
                 } 
             } else if (value is record {}) {
-                if (deepObjectStyleProps is [string, boolean][] && deepObjectStyleProps.indexOf([key, true]) is int) {
+                if (encodingData is [string, boolean] && encodingData[0] == "deepObject") {
                     payload = payload + getDeepObjectStyleRequestBody(key, value);
                 } else { 
-                    payload = payload + getFormStyleRequestBody(key, value, formStyleProps);
+                    payload = payload + getFormStyleRequestBody(key, value, encodingData);
                 }
             } else if (value is record {}[]) {
                 int count = 0;
                 foreach var recordItem in value {
-                if (deepObjectStyleProps is [string, boolean][] && deepObjectStyleProps.indexOf([key, true]) is int) {
+                if (encodingData is [string, boolean] && encodingData[0] == "deepObject") {
                         payload = payload + getDeepObjectStyleRequestBody(key + "[" + count.toString() + "]", value);
                     } else { 
-                        payload = payload + getFormStyleRequestBody(key, value, formStyleProps);
+                        payload = payload + getFormStyleRequestBody(key, value, encodingData);
                     }
                 }
             }
-        
         }
     }
     return payload;
@@ -134,10 +132,10 @@ isolated function getDeepObjectStyleRequestBody(string parent, any anyRecord) re
     return recordString;
 }
 
-isolated function getFormStyleRequestBody(string parent, any anyRecord, [string, boolean][]|error formStyleProps) returns string{
+isolated function getFormStyleRequestBody(string parent, any anyRecord, [string, boolean]|error encodingData) returns string{
     string recordString = "";
     if (anyRecord is record {|any|error...; |}) { 
-        if (formStyleProps is [string, boolean][] && formStyleProps.indexOf([parent, true]) is int) {
+        if (encodingData is [string, boolean] && encodingData[0] == "form" && encodingData[1] == false) {
             foreach [string, any|error] [key, value] in anyRecord.entries() {
                 if (value is string|boolean|int|float) {
                         recordString = recordString + key + "=" + getEncodedUri(value.toString()) + "&";
@@ -146,7 +144,7 @@ isolated function getFormStyleRequestBody(string parent, any anyRecord, [string,
                         recordString = recordString + key + "=" + getEncodedUri(value.toString()) + "&";
                     } 
                 } else if (value is record {}) { // need to test. Couldnt find any reference for url-encoding nested records
-                    recordString = recordString + getFormStyleRequestBody(parent, value, formStyleProps);
+                    recordString = recordString + getFormStyleRequestBody(parent, value, encodingData);
                 }
             }
         } else {
@@ -159,7 +157,7 @@ isolated function getFormStyleRequestBody(string parent, any anyRecord, [string,
                         recordString = recordString + getEncodedUri(value.toString()) + ",";
                     } 
                 } else if (value is record {}) { // need to test. Couldnt find any reference for url-encoding nested records
-                    recordString = recordString + getFormStyleRequestBody(parent, value, formStyleProps);
+                    recordString = recordString + getFormStyleRequestBody(parent, value, encodingData);
                 } //need to imple record array. Couldnt find any reference
             }
         }
