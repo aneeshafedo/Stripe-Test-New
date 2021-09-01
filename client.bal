@@ -52,16 +52,9 @@ public isolated client class Client {
 
     remote isolated function getCustomers(Created? created = (), string? email = (), string? endingBefore = (), string[]? expand = (), int? 'limit = (), string? startingAfter = ()) returns InlineResponse2008|error {
         string  path = string `/v1/customers`;
-        map<anydata> queryParam = {"email": email, "ending_before": endingBefore, "expand": expand, "limit": 'limit, "starting_after": startingAfter};
-        if (created is CreatedObject) {
-            queryParam["created[gt]"] = created?.gt;
-            queryParam["created[gte]"] = created?.gte;
-            queryParam["created[lt]"] = created?.lt;
-            queryParam["created[lte]"] = created?.lte;
-        } else {
-            queryParam["created"] = created;
-        }
-        path = path + check getPathForQueryParam(queryParam);
+        map<anydata> queryParam = {"created" : created, "email": email, "ending_before": endingBefore, "expand": expand, "limit": 'limit, "starting_after": startingAfter};
+        map<[string, boolean]> queryParamEncoding = {"created" : ["deepObject", true]};
+        path = path + check getPathForQueryParam(queryParam, queryParamEncoding);
         io:println("Path : " + path);
         InlineResponse2008 response = check self.clientEp-> get(path, targetType = InlineResponse2008);
         return response;
@@ -71,7 +64,8 @@ public isolated client class Client {
         string  path = string `/v1/customers/${customer}`;
         http:Request request = new;
         map<[string, boolean]> encodingMap = {"address" : ["deepObject", true], "bank_account" : ["deepObject", true], "card" : ["deepObject", true], "expand" : ["deepObject", true], "invoice_settings" : ["deepObject", true], "metadata" : ["deepObject", true], "preferred_locales" : ["deepObject", true], "shipping" : ["deepObject", true], "tax" : ["deepObject", true], "trial_end" : ["deepObject", true]};
-        string requestBody = createFormURLEncodedRequestBody(encodingMap, payload); 
+        string requestBody = createFormURLEncodedRequest(encodingMap, payload); 
+        io:println("requestBody : " + requestBody);
         request.setTextPayload(requestBody);
         check request.setContentType(mime:APPLICATION_FORM_URLENCODED);
         Customer response = check self.clientEp->post(path, request, targetType=Customer);
@@ -79,92 +73,190 @@ public isolated client class Client {
     }
 }
 
-
-isolated function createFormURLEncodedRequestBody(map<[string, boolean]> encoding, any anyRecord) returns string{ 
-    string payload = "";
+# Generate client request when the media type is given as application/x-www-form-urlencoded.
+#
+# + encoding -  Includes the information about the encoding mechanism
+# + anyRecord - Record to be serialized  
+# + parent - Parent record name
+# + return - Serialized request body or query parameter as a string
+isolated function createFormURLEncodedRequest(map<[string, boolean]> encoding, any anyRecord, string? parent = ()) returns string{ 
+    string[] payload = [];
     if (anyRecord is record {|any|error...; |}) {
         foreach [string, any|error] [key, value] in anyRecord.entries() {
-            [string, boolean]|error encodingData = trap encoding.get(key);
+            [string, boolean]|error encodingData;
+            string fieldKey = getOriginalKey(key);
+            if (parent is string) {
+                encodingData = trap encoding.get(parent);
+                fieldKey = getOriginalKey(parent) + "[" + fieldKey + "]";
+            } else {
+                encodingData = trap encoding.get(key);
+            }
             if (value is string|boolean|int|float) {
-                payload = payload + key + "=" + getEncodedUri(value.toString()) + "&"; 
+                payload[payload.length()] = fieldKey + "=" + getEncodedUri(value.toString()); 
             } else if (value is string[]) {
                 foreach var str in value {
-                    payload = payload + key + "[]" + "=" + getEncodedUri(str.toString()) + "&";
+                    payload[payload.length()] = fieldKey + "[]" + "=" + getEncodedUri(str.toString());
                 } 
             } else if (value is record {}) {
                 if (encodingData is [string, boolean] && encodingData[0] == "deepObject") {
-                    payload = payload + getDeepObjectStyleRequestBody(key, value);
+                    payload[payload.length()] = getDeepObjectStyleRequest(fieldKey, value);
                 } else { 
-                    payload = payload + getFormStyleRequestBody(key, value, encodingData);
+                    payload[payload.length()] = getFormStyleRequest(fieldKey, value);
                 }
             } else if (value is record {}[]) {
                 int count = 0;
                 foreach var recordItem in value {
-                if (encodingData is [string, boolean] && encodingData[0] == "deepObject") {
-                        payload = payload + getDeepObjectStyleRequestBody(key + "[" + count.toString() + "]", value);
-                    } else { 
-                        payload = payload + getFormStyleRequestBody(key, value, encodingData);
+                    if (encodingData is [string, boolean] && encodingData[0] == "deepObject") {
+                        payload[payload.length()] = getDeepObjectStyleRequest(fieldKey + "[" + count.toString() + "]", recordItem);
+                    } else if (encodingData is [string, boolean] && encodingData[0] == "form") {
+                        payload[payload.length()] = getFormStyleRequest(fieldKey, recordItem, (<[string, boolean]>encodingData)[1]);
+                    } else {
+                        payload[payload.length()] = getFormStyleRequest(fieldKey, recordItem);
                     }
+                    payload[payload.length()] = "&";
                 }
             }
+            payload[payload.length()] = "&";
         }
+        _ = payload.remove(payload.length() - 1);
     }
-    return payload;
+    return string:'join("", ...payload);
 }
 
-isolated function getDeepObjectStyleRequestBody(string parent, any anyRecord) returns string{
-    string recordString = "";
+# Serialize the record according to the deepObject style.
+#
+# + parent - Parent record name  
+# + anyRecord - Record to be serialized
+# + return - Serialized record as a string 
+isolated function getDeepObjectStyleRequest(string parent, any anyRecord) returns string {
+    string[] recordArray = [];
     if (anyRecord is record {|any|error...; |}) { 
         foreach [string, any|error] [key, value] in anyRecord.entries() {
+            string fieldKey = getOriginalKey(key);
             if (value is string|boolean|int|float) {
-                recordString = recordString + parent + "[" + key + "]" + "=" + getEncodedUri(value.toString()) + "&";
+                recordArray[recordArray.length()] = parent + "[" + fieldKey + "]" + "=" + getEncodedUri(value.toString());
             } else if (value is string[]) {
                 foreach string str in value {
-                    recordString = recordString + parent + "[" + key + "]" + "[]" + "=" + getEncodedUri(value.toString()) + "&";
+                    recordArray[recordArray.length()] = parent + "[" + fieldKey + "]" + "[]" + "=" + getEncodedUri(value.toString());
                 } 
             } else if (value is record {}) { // need to test. Couldnt find any reference for url-encoding nested records
-                string nextParent = parent + "[" + key + "]";
-                recordString = recordString + getDeepObjectStyleRequestBody(nextParent, value);
+                string nextParent = parent + "[" + fieldKey + "]";
+                recordArray[recordArray.length()] = getDeepObjectStyleRequest(nextParent, value);
             } //need to imple record array. Couldnt find any reference
+            recordArray[recordArray.length()] = "&";
         }
+        _ = recordArray.remove(recordArray.length() - 1);
     }
-    
-    return recordString;
+    return string:'join("", ...recordArray);
 }
 
-isolated function getFormStyleRequestBody(string parent, any anyRecord, [string, boolean]|error encodingData) returns string{
-    string recordString = "";
+# Serialize the record according to the form style.
+#
+# + parent - Parent record name    
+# + anyRecord - Record to be serialized  
+# + explode - Specifies whether arrays and objects should generate separate parameters
+# + return - Serialized record as a string
+isolated function getFormStyleRequest(string parent, any anyRecord, boolean explode = true) returns string{
+    string[] recordArray = [];
     if (anyRecord is record {|any|error...; |}) { 
-        if (encodingData is [string, boolean] && encodingData[0] == "form" && encodingData[1] == false) {
+        if (explode) {
             foreach [string, any|error] [key, value] in anyRecord.entries() {
+                string fieldKey = getOriginalKey(key);
                 if (value is string|boolean|int|float) {
-                        recordString = recordString + key + "=" + getEncodedUri(value.toString()) + "&";
+                    recordArray[recordArray.length()] = fieldKey + "=" + getEncodedUri(value.toString());
                 } else if (value is string[]) {
-                    foreach string str in value {
-                        recordString = recordString + key + "=" + getEncodedUri(value.toString()) + "&";
-                    } 
+                    recordArray[recordArray.length()] = getSerializedArray(fieldKey, value);
                 } else if (value is record {}) { // need to test. Couldnt find any reference for url-encoding nested records
-                    recordString = recordString + getFormStyleRequestBody(parent, value, encodingData);
+                    recordArray[recordArray.length()] = getFormStyleRequest(parent, value, explode);
                 }
+                recordArray[recordArray.length()] = "&";
             }
+            _ = recordArray.remove(recordArray.length() - 1);
         } else {
-            recordString = recordString + parent+ "=";
+            recordArray[recordArray.length()] = parent;
+            recordArray[recordArray.length()] = "=";
             foreach [string, any|error] [key, value] in anyRecord.entries() {
+                string fieldKey = getOriginalKey(key);
                 if (value is string|boolean|int|float) {
-                    recordString = recordString + getEncodedUri(value.toString()) + ",";
+                    recordArray[recordArray.length()] = fieldKey + "," + getEncodedUri(value.toString());
                 } else if (value is string[]) {
-                    foreach string str in value {
-                        recordString = recordString + getEncodedUri(value.toString()) + ",";
-                    } 
+                    recordArray[recordArray.length()] = getSerializedArray(fieldKey, value, explode = false);
                 } else if (value is record {}) { // need to test. Couldnt find any reference for url-encoding nested records
-                    recordString = recordString + getFormStyleRequestBody(parent, value, encodingData);
+                    recordArray[recordArray.length()] = getFormStyleRequest(parent, value, explode);
                 } //need to imple record array. Couldnt find any reference
+                recordArray[recordArray.length()] = ",";
             }
+            _ = recordArray.remove(recordArray.length() - 1);
         }
     }
-    return recordString;
+    return string:'join("", ...recordArray);
 }
 
+# Serialize arrays.
+#
+# + arrayName - Name of the field with arrays
+# + anyArray - Array to be serialized  
+# + style - Defines how multiple values are delimited 
+# + explode - Specifies whether arrays and objects should generate separate parameters
+# + return - Serialized array as a string
+isolated function getSerializedArray(string arrayName, anydata[] anyArray, string style = "form", boolean explode = true) returns string{
+    string arrayString = "";
+    string key;
+    string[] arrayValues = [];
+    if string:startsWith(arrayName, "'") {
+        key = string:substring(arrayName, 1, arrayName.length());
+    } else {
+        key = arrayName;
+    }
+    if (style.equalsIgnoreCaseAscii("form") && !explode) {
+        arrayValues[arrayValues.length()] = key;
+        arrayValues[arrayValues.length()] = "=";
+        foreach anydata i in anyArray {
+            arrayValues[arrayValues.length()] = getEncodedUri(i.toString());
+            arrayValues[arrayValues.length()] = ",";
+        }
+        if arrayValues.length() != 0 {
+            _ = arrayValues.remove(arrayValues.length() - 1);
+        }
+    } else if (style.equalsIgnoreCaseAscii("spaceDelimited") && !explode) {
+        arrayValues[arrayValues.length()] = key;
+        arrayValues[arrayValues.length()] = "=";
+        foreach anydata i in anyArray {
+            arrayValues[arrayValues.length()] = getEncodedUri(i.toString());
+            arrayValues[arrayValues.length()] = "%20";
+        }
+        if arrayValues.length() != 0 {
+            _ = arrayValues.remove(arrayValues.length() - 1);
+        }
+    } else if (style.equalsIgnoreCaseAscii("pipeDelimited") && !explode) {
+        arrayValues[arrayValues.length()] = key;
+        arrayValues[arrayValues.length()] = "=";
+        foreach anydata i in anyArray {
+            arrayValues[arrayValues.length()] = getEncodedUri(i.toString());
+            arrayValues[arrayValues.length()] = "|";
+        }
+        if arrayValues.length() != 0 {
+            _ = arrayValues.remove(arrayValues.length() - 1);
+        }
+    } else {
+        foreach anydata i in anyArray {
+            arrayValues[arrayValues.length()] = key;
+            arrayValues[arrayValues.length()] = "=";
+            arrayValues[arrayValues.length()] = getEncodedUri(i.toString());
+            arrayValues[arrayValues.length()] = "&";
+        }
+        if arrayValues.length() != 0 {
+            _ = arrayValues.remove(arrayValues.length() - 1);
+        }
+    } 
+
+    return arrayString;
+}
+
+# Get Encoded URI for a given value.
+#
+# + value - Value to be encoded
+# + return - Encoded string
 isolated function getEncodedUri(string value) returns string {
     string|error encoded = url:encode(value, "UTF8");
     if (encoded is string) {
@@ -174,31 +266,57 @@ isolated function getEncodedUri(string value) returns string {
     }
 }
 
+# Apostrophe has been added to the keys that could find as ballerina keywords. 
+# This function will remove the apostrophe from the key. 
+#
+# + keyName - Key to be altered
+# + return - Original key
+isolated function getOriginalKey(string keyName) returns string{
+    if  string:startsWith( keyName, "'") {
+        return string:substring(keyName, 1, keyName.length());
+    } else {
+        return keyName;
+    }
+}
+
 # Generate query path with query parameter.
 #
-# + queryParam - Query parameter map 
-# + return - Returns generated Path or error at failure of client initialization 
-isolated function  getPathForQueryParam(map<anydata> queryParam)  returns  string|error {
+# + queryParam - Query parameter map   
+# + serializationMap - Details on serialization mechanism
+# + return - Returns generated Path or error at failure of client initialization
+isolated function  getPathForQueryParam(map<anydata> queryParam, map<[string, boolean]> serializationMap = {})  returns  string|error {
     string[] param = [];
     param[param.length()] = "?";
     foreach  var [key, value] in  queryParam.entries() {
         if  value  is  () {
             _ = queryParam.remove(key);
         } else {
+            string finalKey;
             if  string:startsWith( key, "'") {
-                 param[param.length()] = string:substring(key, 1, key.length());
+                finalKey = string:substring(key, 1, key.length());
             } else {
-                param[param.length()] = key;
+                finalKey = key;
             }
-            param[param.length()] = "=";
-            if  value  is  string {
-                string updateV =  check url:encode(value, "UTF-8");
-                param[param.length()] = updateV;
+            if (value is string|boolean|int|float) {
+                param[param.length()] = finalKey;
+                param[param.length()] = "=";
+                param[param.length()] = getEncodedUri(value.toString());
+            } else if (value is anydata[]) {
+                [string, boolean]|error encodingData = trap serializationMap.get(key);
+                if (encodingData is [string, boolean]) {
+                    param[param.length()] = getSerializedArray(finalKey, value, encodingData[0], encodingData[1]);
+                } else {
+                    param[param.length()] = getSerializedArray(finalKey, value);
+                }
+            } else if (value is record {|any|error...; |}) {
+                param[param.length()] = createFormURLEncodedRequest(serializationMap, value, key);
             } else {
+                param[param.length()] = finalKey;
+                param[param.length()] = "=";
                 param[param.length()] = value.toString();
             }
             param[param.length()] = "&";
-        }
+        } 
     }
     _ = param.remove(param.length()-1);
     if  param.length() ==  1 {
@@ -207,3 +325,4 @@ isolated function  getPathForQueryParam(map<anydata> queryParam)  returns  strin
     string restOfPath = string:'join("", ...param);
     return restOfPath;
 }
+
