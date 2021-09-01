@@ -64,7 +64,7 @@ public isolated client class Client {
         string  path = string `/v1/customers/${customer}`;
         http:Request request = new;
         map<[string, boolean]> encodingMap = {"address" : ["deepObject", true], "bank_account" : ["deepObject", true], "card" : ["deepObject", true], "expand" : ["deepObject", true], "invoice_settings" : ["deepObject", true], "metadata" : ["deepObject", true], "preferred_locales" : ["deepObject", true], "shipping" : ["deepObject", true], "tax" : ["deepObject", true], "trial_end" : ["deepObject", true]};
-        string requestBody = createFormURLEncodedRequest(encodingMap, payload); 
+        string requestBody = createFormURLEncodedRequestBody(encodingMap, payload); 
         io:println("requestBody : " + requestBody);
         request.setTextPayload(requestBody);
         check request.setContentType(mime:APPLICATION_FORM_URLENCODED);
@@ -77,20 +77,14 @@ public isolated client class Client {
 #
 # + encoding -  Includes the information about the encoding mechanism
 # + anyRecord - Record to be serialized  
-# + parent - Parent record name
 # + return - Serialized request body or query parameter as a string
-isolated function createFormURLEncodedRequest(map<[string, boolean]> encoding, any anyRecord, string? parent = ()) returns string{ 
+isolated function createFormURLEncodedRequestBody(map<[string, boolean]> encoding, any anyRecord) returns string{ 
     string[] payload = [];
     if (anyRecord is record {|any|error...; |}) {
         foreach [string, any|error] [key, value] in anyRecord.entries() {
             [string, boolean]|error encodingData;
             string fieldKey = getOriginalKey(key);
-            if (parent is string) {
-                encodingData = trap encoding.get(parent);
-                fieldKey = getOriginalKey(parent) + "[" + fieldKey + "]";
-            } else {
-                encodingData = trap encoding.get(key);
-            }
+            encodingData = trap encoding.get(key);
             if (value is string|boolean|int|float) {
                 payload[payload.length()] = fieldKey + "=" + getEncodedUri(value.toString()); 
             } else if (value is string[]|boolean[]|int[]|float[]) {
