@@ -25,7 +25,20 @@ function testCreateCustomer() returns error? {
             country: "Sri Lanka"
         },
         balance: 200,
-        email: "aneeshax@gmail.com"
+        email: "aneeshax@gmail.com",
+        invoice_settings: {
+            custom_fields: [
+                {
+                    "name" : "Discount",
+                    "value": "80"
+                }, 
+                {
+                    "name" : "TaxPercentage",
+                    "value" : "90"
+                }
+            ],
+            footer: "ABC com"
+        }
     };
     Customer postCustomersCustomer = check baseClient->postCustomersCustomer("cus_K1vt95o2PvFn4R", newCustomer);
     io:println(postCustomersCustomer);

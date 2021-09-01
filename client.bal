@@ -93,14 +93,19 @@ isolated function createFormURLEncodedRequest(map<[string, boolean]> encoding, a
             }
             if (value is string|boolean|int|float) {
                 payload[payload.length()] = fieldKey + "=" + getEncodedUri(value.toString()); 
-            } else if (value is string[]) {
-                foreach var str in value {
-                    payload[payload.length()] = fieldKey + "[]" + "=" + getEncodedUri(str.toString());
-                } 
+            } else if (value is string[]|boolean[]|int[]|float[]) {
+                if (encodingData is [string, boolean]) {
+                    payload[payload.length()] = getSerializedArray(fieldKey, value, encodingData[0], encodingData[1]);
+                } else {
+                    payload[payload.length()] = getSerializedArray(fieldKey, value);
+                }
             } else if (value is record {}) {
                 if (encodingData is [string, boolean] && encodingData[0] == "deepObject") {
                     payload[payload.length()] = getDeepObjectStyleRequest(fieldKey, value);
-                } else { 
+                } else if (encodingData is [string, boolean] && encodingData[0] == "form") {
+                    payload[payload.length()] = getFormStyleRequest(fieldKey, value, encodingData[1]);
+                }
+                else { 
                     payload[payload.length()] = getFormStyleRequest(fieldKey, value);
                 }
             } else if (value is record {}[]) {
@@ -108,13 +113,21 @@ isolated function createFormURLEncodedRequest(map<[string, boolean]> encoding, a
                 foreach var recordItem in value {
                     if (encodingData is [string, boolean] && encodingData[0] == "deepObject") {
                         payload[payload.length()] = getDeepObjectStyleRequest(fieldKey + "[" + count.toString() + "]", recordItem);
-                    } else if (encodingData is [string, boolean] && encodingData[0] == "form") {
-                        payload[payload.length()] = getFormStyleRequest(fieldKey, recordItem, (<[string, boolean]>encodingData)[1]);
+                        payload[payload.length()] = "&";
+                    } else if (encodingData is [string, boolean] && encodingData[0] == "form" && encodingData[1] == false) {
+                        if (count > 0) {
+                            payload[payload.length()] = getFormStyleRequest(fieldKey, recordItem, encodingData[1], true);
+                        } else {
+                            payload[payload.length()] = getFormStyleRequest(fieldKey, recordItem, encodingData[1]);
+                        }
+                        payload[payload.length()] = ",";
                     } else {
                         payload[payload.length()] = getFormStyleRequest(fieldKey, recordItem);
+                        payload[payload.length()] = "&";
                     }
-                    payload[payload.length()] = "&";
+                    count = count + 1;
                 }
+                 _ = payload.remove(payload.length() - 1);
             }
             payload[payload.length()] = "&";
         }
@@ -135,14 +148,21 @@ isolated function getDeepObjectStyleRequest(string parent, any anyRecord) return
             string fieldKey = getOriginalKey(key);
             if (value is string|boolean|int|float) {
                 recordArray[recordArray.length()] = parent + "[" + fieldKey + "]" + "=" + getEncodedUri(value.toString());
-            } else if (value is string[]) {
-                foreach string str in value {
-                    recordArray[recordArray.length()] = parent + "[" + fieldKey + "]" + "[]" + "=" + getEncodedUri(value.toString());
-                } 
+            } else if (value is string[]|boolean[]|int[]|float[]) {
+                recordArray[recordArray.length()] = getSerializedArray(parent + "[" + fieldKey + "]" + "[]", value, "deepObject", true); 
             } else if (value is record {}) { // need to test. Couldnt find any reference for url-encoding nested records
                 string nextParent = parent + "[" + fieldKey + "]";
                 recordArray[recordArray.length()] = getDeepObjectStyleRequest(nextParent, value);
-            } //need to imple record array. Couldnt find any reference
+            } else if (value is record {}[]) {
+                string nextParent = parent + "[" + fieldKey + "]";
+                int count = 0;
+                foreach var recordItem in value {
+                    recordArray[recordArray.length()] = getDeepObjectStyleRequest(nextParent + "[" + count.toString() + "]", recordItem);
+                    count = count + 1;
+                    recordArray[recordArray.length()] = "&";
+                }
+                _ = recordArray.remove(recordArray.length() - 1);
+            }
             recordArray[recordArray.length()] = "&";
         }
         _ = recordArray.remove(recordArray.length() - 1);
@@ -152,11 +172,12 @@ isolated function getDeepObjectStyleRequest(string parent, any anyRecord) return
 
 # Serialize the record according to the form style.
 #
-# + parent - Parent record name    
-# + anyRecord - Record to be serialized  
-# + explode - Specifies whether arrays and objects should generate separate parameters
+# + parent - Parent record name      
+# + anyRecord - Record to be serialized    
+# + explode - Specifies whether arrays and objects should generate separate parameters  
+# + isNested - Whether the record is inside another record
 # + return - Serialized record as a string
-isolated function getFormStyleRequest(string parent, any anyRecord, boolean explode = true) returns string{
+isolated function getFormStyleRequest(string parent, any anyRecord, boolean explode = true, boolean isNested = false) returns string{
     string[] recordArray = [];
     if (anyRecord is record {|any|error...; |}) { 
         if (explode) {
@@ -164,8 +185,8 @@ isolated function getFormStyleRequest(string parent, any anyRecord, boolean expl
                 string fieldKey = getOriginalKey(key);
                 if (value is string|boolean|int|float) {
                     recordArray[recordArray.length()] = fieldKey + "=" + getEncodedUri(value.toString());
-                } else if (value is string[]) {
-                    recordArray[recordArray.length()] = getSerializedArray(fieldKey, value);
+                } else if (value is string[]|boolean[]|int[]|float[]) {
+                    recordArray[recordArray.length()] = getSerializedArray(fieldKey, value, explode = explode);
                 } else if (value is record {}) { // need to test. Couldnt find any reference for url-encoding nested records
                     recordArray[recordArray.length()] = getFormStyleRequest(parent, value, explode);
                 }
@@ -173,17 +194,19 @@ isolated function getFormStyleRequest(string parent, any anyRecord, boolean expl
             }
             _ = recordArray.remove(recordArray.length() - 1);
         } else {
-            recordArray[recordArray.length()] = parent;
-            recordArray[recordArray.length()] = "=";
+            if (!isNested) {
+                recordArray[recordArray.length()] = parent;
+                recordArray[recordArray.length()] = "=";
+            }
             foreach [string, any|error] [key, value] in anyRecord.entries() {
                 string fieldKey = getOriginalKey(key);
                 if (value is string|boolean|int|float) {
                     recordArray[recordArray.length()] = fieldKey + "," + getEncodedUri(value.toString());
-                } else if (value is string[]) {
+                } else if (value is string[]|boolean[]|int[]|float[]) {
                     recordArray[recordArray.length()] = getSerializedArray(fieldKey, value, explode = false);
                 } else if (value is record {}) { // need to test. Couldnt find any reference for url-encoding nested records
-                    recordArray[recordArray.length()] = getFormStyleRequest(parent, value, explode);
-                } //need to imple record array. Couldnt find any reference
+                    recordArray[recordArray.length()] = getFormStyleRequest(parent, value, explode, true);
+                } //need to implement record array. Couldnt find any reference
                 recordArray[recordArray.length()] = ",";
             }
             _ = recordArray.remove(recordArray.length() - 1);
@@ -200,7 +223,6 @@ isolated function getFormStyleRequest(string parent, any anyRecord, boolean expl
 # + explode - Specifies whether arrays and objects should generate separate parameters
 # + return - Serialized array as a string
 isolated function getSerializedArray(string arrayName, anydata[] anyArray, string style = "form", boolean explode = true) returns string{
-    string arrayString = "";
     string key;
     string[] arrayValues = [];
     if string:startsWith(arrayName, "'") {
@@ -250,7 +272,7 @@ isolated function getSerializedArray(string arrayName, anydata[] anyArray, strin
         }
     } 
 
-    return arrayString;
+    return string:'join("", ...arrayValues);
 }
 
 # Get Encoded URI for a given value.
@@ -301,7 +323,7 @@ isolated function  getPathForQueryParam(map<anydata> queryParam, map<[string, bo
                 param[param.length()] = finalKey;
                 param[param.length()] = "=";
                 param[param.length()] = getEncodedUri(value.toString());
-            } else if (value is anydata[]) {
+            } else if (value is string[]|boolean[]|int[]|float[]) {
                 [string, boolean]|error encodingData = trap serializationMap.get(key);
                 if (encodingData is [string, boolean]) {
                     param[param.length()] = getSerializedArray(finalKey, value, encodingData[0], encodingData[1]);
@@ -309,7 +331,16 @@ isolated function  getPathForQueryParam(map<anydata> queryParam, map<[string, bo
                     param[param.length()] = getSerializedArray(finalKey, value);
                 }
             } else if (value is record {|any|error...; |}) {
-                param[param.length()] = createFormURLEncodedRequest(serializationMap, value, key);
+                [string, boolean]|error encodingData = trap serializationMap.get(key);
+                if (encodingData is [string, boolean]) {
+                    if (encodingData[0] == "deepObject") {
+                        param[param.length()] = getDeepObjectStyleRequest(key, value);
+                    } else {
+                        param[param.length()] = getFormStyleRequest(key, value, encodingData[1]);
+                    }
+                } else {
+                    param[param.length()] = getFormStyleRequest(key, value);
+                }
             } else {
                 param[param.length()] = finalKey;
                 param[param.length()] = "=";
